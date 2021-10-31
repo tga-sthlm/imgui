@@ -2477,6 +2477,12 @@ bool ImGui::DragScalarN(const char* label, ImGuiDataType data_type, void* p_data
     ImGuiContext& g = *GImGui;
     bool value_changed = false;
     BeginGroup();
+    const char* label_end = FindRenderedTextEnd(label);
+    if (label != label_end)
+    {
+        //SameLine(0, g.Style.ItemInnerSpacing.x);
+        TextEx(label, label_end);
+    }
     PushID(label);
     PushMultiItemsWidths(components, CalcItemWidth());
     size_t type_size = GDataTypeInfo[data_type].Size;
@@ -2492,12 +2498,6 @@ bool ImGui::DragScalarN(const char* label, ImGuiDataType data_type, void* p_data
     }
     PopID();
 
-    const char* label_end = FindRenderedTextEnd(label);
-    if (label != label_end)
-    {
-        SameLine(0, g.Style.ItemInnerSpacing.x);
-        TextEx(label, label_end);
-    }
 
     EndGroup();
     return value_changed;
