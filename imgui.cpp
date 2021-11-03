@@ -926,6 +926,7 @@ static ImVec2           NavCalcPreferredRefPos();
 static void             NavSaveLastChildNavWindowIntoParent(ImGuiWindow* nav_window);
 static ImGuiWindow*     NavRestoreLastChildNavWindow(ImGuiWindow* window);
 static void             NavRestoreLayer(ImGuiNavLayer layer);
+static void             NavRestoreHighlightAfterMove();
 static int              FindWindowFocusIndex(ImGuiWindow* window);
 
 // Error Checking and Debug Tools
@@ -2296,7 +2297,7 @@ static void SetCursorPosYAndSetupForPrevLine(float pos_y, float line_height)
     ImGuiWindow* window = g.CurrentWindow;
     float off_y = pos_y - window->DC.CursorPos.y;
     window->DC.CursorPos.y = pos_y;
-    window->DC.CursorMaxPos.y = ImMax(window->DC.CursorMaxPos.y, pos_y);
+    window->DC.CursorMaxPos.y = ImMax(window->DC.CursorMaxPos.y, pos_y - g.Style.ItemSpacing.y);
     window->DC.CursorPosPrevLine.y = window->DC.CursorPos.y - line_height;  // Setting those fields so that SetScrollHereY() can properly function after the end of our clipper usage.
     window->DC.PrevLineSize.y = (line_height - g.Style.ItemSpacing.y);      // If we end up needing more accurate data (to e.g. use SameLine) we may as well make the clipper have a fourth step to let user process and display the last item in their list.
     if (ImGuiOldColumns* columns = window->DC.CurrentColumns)
@@ -5489,7 +5490,7 @@ static bool ImGui::UpdateWindowManualResize(ImGuiWindow* window, const ImVec2& s
         bool hovered, held;
         ImRect border_rect = GetResizeBorderRect(window, border_n, grip_hover_inner_size, WINDOWS_HOVER_PADDING);
         ImGuiID border_id = window->GetID(border_n + 4); // == GetWindowResizeBorderID()
-        ButtonBehavior(border_rect, border_id, &hovered, &held, ImGuiButtonFlags_FlattenChildren);
+        ButtonBehavior(border_rect, border_id, &hovered, &held, ImGuiButtonFlags_FlattenChildren | ImGuiButtonFlags_NoNavFocus);
         //GetForegroundDrawLists(window)->AddRect(border_rect.Min, border_rect.Max, IM_COL32(255, 255, 0, 255));
         if ((hovered && g.HoveredIdTimer > WINDOWS_RESIZE_FROM_EDGES_FEEDBACK_TIMER) || held)
         {
@@ -5678,6 +5679,7 @@ void ImGui::RenderWindowTitleBarContents(ImGuiWindow* window, const ImRect& titl
     const bool has_collapse_button = !(flags & ImGuiWindowFlags_NoCollapse) && (style.WindowMenuButtonPosition != ImGuiDir_None);
 
     // Close & Collapse button are on the Menu NavLayer and don't default focus (unless there's nothing else on that layer)
+    // FIXME-NAV: Might want (or not?) to set the equivalent of ImGuiButtonFlags_NoNavFocus so that mouse clicks on standard title bar items don't necessarily set nav/keyboard ref?
     const ImGuiItemFlags item_flags_backup = g.CurrentItemFlags;
     g.CurrentItemFlags |= ImGuiItemFlags_NoNavDefaultFocus;
     window->DC.NavLayerCurrent = ImGuiNavLayer_Menu;
@@ -6164,7 +6166,7 @@ bool ImGui::Begin(const char* name, bool* p_open, ImGuiWindowFlags flags)
         // Inner rectangle
         // Not affected by window border size. Used by:
         // - InnerClipRect
-        // - ScrollToBringRectIntoView()
+        // - ScrollToRectEx()
         // - NavUpdatePageUpPageDown()
         // - Scrollbar()
         window->InnerRect.Min.x = window->Pos.x;
@@ -8042,8 +8044,8 @@ ImVec2 ImGui::ScrollToRectEx(ImGuiWindow* window, const ImRect& item_rect, ImGui
 
     const bool fully_visible_x = item_rect.Min.x >= window_rect.Min.x && item_rect.Max.x <= window_rect.Max.x;
     const bool fully_visible_y = item_rect.Min.y >= window_rect.Min.y && item_rect.Max.y <= window_rect.Max.y;
-    const bool can_be_fully_visible_x = item_rect.GetWidth() <= window_rect.GetWidth();
-    const bool can_be_fully_visible_y = item_rect.GetHeight() <= window_rect.GetHeight();
+    const bool can_be_fully_visible_x = (item_rect.GetWidth() + g.Style.ItemSpacing.x * 2.0f) <= window_rect.GetWidth();
+    const bool can_be_fully_visible_y = (item_rect.GetHeight() + g.Style.ItemSpacing.y * 2.0f) <= window_rect.GetHeight();
 
     if ((flags & ImGuiScrollFlags_KeepVisibleEdgeX) && !fully_visible_x)
     {
@@ -8810,8 +8812,6 @@ void ImGui::SetNavID(ImGuiID id, ImGuiNavLayer nav_layer, ImGuiID focus_scope_id
     g.NavFocusScopeId = focus_scope_id;
     g.NavWindow->NavLastIds[nav_layer] = id;
     g.NavWindow->NavRectRel[nav_layer] = rect_rel;
-    //g.NavDisableHighlight = false;
-    //g.NavDisableMouseHover = g.NavMousePosDirty = true;
 }
 
 void ImGui::SetFocusID(ImGuiID id, ImGuiWindow* window)
@@ -9186,6 +9186,11 @@ void ImGui::NavRestoreLayer(ImGuiNavLayer layer)
         g.NavLayer = layer;
         NavInitWindow(window, true);
     }
+}
+
+void ImGui::NavRestoreHighlightAfterMove()
+{
+    ImGuiContext& g = *GImGui;
     g.NavDisableHighlight = false;
     g.NavDisableMouseHover = g.NavMousePosDirty = true;
 }
@@ -9485,10 +9490,7 @@ void ImGui::NavInitRequestApplyResult()
     SetNavID(g.NavInitResultId, g.NavLayer, 0, g.NavInitResultRectRel);
     g.NavIdIsAlive = true; // Mark as alive from previous frame as we got a result
     if (g.NavInitRequestFromMove)
-    {
-        g.NavDisableHighlight = false;
-        g.NavDisableMouseHover = g.NavMousePosDirty = true;
-    }
+        NavRestoreHighlightAfterMove();
 }
 
 void ImGui::NavUpdateCreateMoveRequest()
@@ -9603,10 +9605,7 @@ void ImGui::NavMoveRequestApplyResult()
         if (g.NavMoveFlags & ImGuiNavMoveFlags_Tabbing)
             g.NavMoveFlags |= ImGuiNavMoveFlags_DontSetNavHighlight;
         if (g.NavId != 0 && (g.NavMoveFlags & ImGuiNavMoveFlags_DontSetNavHighlight) == 0)
-        {
-            g.NavDisableHighlight = false;
-            g.NavDisableMouseHover = true;
-        }
+            NavRestoreHighlightAfterMove();
         return;
     }
 
@@ -9668,10 +9667,7 @@ void ImGui::NavMoveRequestApplyResult()
 
     // Enable nav highlight
     if ((g.NavMoveFlags & ImGuiNavMoveFlags_DontSetNavHighlight) == 0)
-    {
-        g.NavDisableHighlight = false;
-        g.NavDisableMouseHover = g.NavMousePosDirty = true;
-    }
+        NavRestoreHighlightAfterMove();
 }
 
 // Process NavCancel input (to close a popup, get back to parent, clear focus)
@@ -9694,6 +9690,7 @@ static void ImGui::NavUpdateCancelRequest()
     {
         // Leave the "menu" layer
         NavRestoreLayer(ImGuiNavLayer_Main);
+        NavRestoreHighlightAfterMove();
     }
     else if (g.NavWindow && g.NavWindow != g.NavWindow->RootWindow && !(g.NavWindow->Flags & ImGuiWindowFlags_Popup) && g.NavWindow->ParentWindow)
     {
@@ -9704,6 +9701,7 @@ static void ImGui::NavUpdateCancelRequest()
         ImRect child_rect = child_window->Rect();
         FocusWindow(parent_window);
         SetNavID(child_window->ChildId, ImGuiNavLayer_Main, 0, WindowRectAbsToRel(parent_window, child_rect));
+        NavRestoreHighlightAfterMove();
     }
     else if (g.OpenPopupStack.Size > 0)
     {
@@ -9730,7 +9728,7 @@ static float ImGui::NavUpdatePageUpPageDown()
     ImGuiIO& io = g.IO;
 
     ImGuiWindow* window = g.NavWindow;
-    if ((window->Flags & ImGuiWindowFlags_NoNavInputs) || g.NavWindowingTarget != NULL || g.NavLayer != ImGuiNavLayer_Main)
+    if ((window->Flags & ImGuiWindowFlags_NoNavInputs) || g.NavWindowingTarget != NULL)
         return 0.0f;
 
     const bool page_up_held = IsKeyDown(io.KeyMap[ImGuiKey_PageUp]) && !IsActiveIdUsingKey(ImGuiKey_PageUp);
@@ -9739,6 +9737,9 @@ static float ImGui::NavUpdatePageUpPageDown()
     const bool end_pressed = IsKeyPressed(io.KeyMap[ImGuiKey_End]) && !IsActiveIdUsingKey(ImGuiKey_End);
     if (page_up_held == page_down_held && home_pressed == end_pressed) // Proceed if either (not both) are pressed, otherwise early out
         return 0.0f;
+
+    if (g.NavLayer != ImGuiNavLayer_Main)
+        NavRestoreLayer(ImGuiNavLayer_Main);
 
     if (window->DC.NavLayersActiveMask == 0x00 && window->DC.NavHasScroll)
     {
@@ -10027,8 +10028,7 @@ static void ImGui::NavUpdateWindowing()
     if (apply_focus_window && (g.NavWindow == NULL || apply_focus_window != g.NavWindow->RootWindow))
     {
         ClearActiveID();
-        g.NavDisableHighlight = false;
-        g.NavDisableMouseHover = true;
+        NavRestoreHighlightAfterMove();
         apply_focus_window = NavRestoreLastChildNavWindow(apply_focus_window);
         ClosePopupsOverWindow(apply_focus_window, false);
         FocusWindow(apply_focus_window);
@@ -10075,6 +10075,7 @@ static void ImGui::NavUpdateWindowing()
             if (new_nav_layer == ImGuiNavLayer_Menu)
                 g.NavWindow->NavLastIds[new_nav_layer] = 0;
             NavRestoreLayer(new_nav_layer);
+            NavRestoreHighlightAfterMove();
         }
     }
 }
