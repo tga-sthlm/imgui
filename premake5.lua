@@ -22,4 +22,7 @@ project "dearimgui"
 		"%{imguizmodir}/ImGuizmo.cpp",
 	}
 
-	includedirs { ".", "%{imguizmodir}",}
+	includedirs { 
+		".", 
+		"%{imguizmodir}",
+	}
